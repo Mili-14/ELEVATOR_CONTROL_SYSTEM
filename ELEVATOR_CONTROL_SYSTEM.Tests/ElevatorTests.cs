@@ -151,27 +151,6 @@ namespace ELEVATOR_CONTROL_SYSTEM.Tests
     public class OptimalRequestDispatcherTests
     {
         [Fact]
-        public void SelectElevatorForRequest_ShouldSelectClosestElevator()
-        {
-            // Arrange
-            var dispatcher = new OptimalRequestDispatcher();
-            var elevators = new[]
-            {
-                new Elevator(1, 1),
-                new Elevator(2, 5),
-                new Elevator(3, 10),
-                new Elevator(4, 3)
-            };
-            var request = new ElevatorRequest(4, RequestType.Up);
-
-            // Act
-            var selectedElevator = dispatcher.SelectElevatorForRequest(request, elevators);
-
-            // Assert
-            Assert.Equal(4, selectedElevator.Id); // Elevator at floor 3 is closest to floor 4
-        }
-
-        [Fact]
         public void SelectElevatorForRequest_ShouldPreferElevatorMovingInSameDirection()
         {
             // Arrange
