@@ -18,39 +18,52 @@ namespace ElevatorControlSystem
         private static IRandomRequestGenerator _requestGenerator;
         private static ILoggingService _logger;
         private static CancellationTokenSource _cancellationTokenSource;
+        private static volatile bool _isRunning = false;
 
         public static async Task Main(string[] args)
         {
-            Console.WriteLine("=== Professional Elevator Control System ===");
-            Console.WriteLine($"Building Configuration: {BuildingConfiguration.TotalFloors} floors, {BuildingConfiguration.TotalElevators} elevators");
-            Console.WriteLine($"Simulation Speed: {BuildingConfiguration.SimulationSpeedMultiplier}x faster than real-time");
-            Console.WriteLine("Press 'q' to quit, 's' to show system status\n");
-
-            InitializeServices();
-
-            _cancellationTokenSource = new CancellationTokenSource();
-
-            // Start the elevator controller
-            var controllerTask = _elevatorController.StartAsync(_cancellationTokenSource.Token);
-
-            // Start random request generation
-            var requestTask = GenerateRandomRequestsAsync(_cancellationTokenSource.Token);
-
-            // Handle user input
-            var inputTask = HandleUserInputAsync(_cancellationTokenSource.Token);
-
             try
             {
+                Console.WriteLine("=== Professional Elevator Control System ===");
+                Console.WriteLine($"Building Configuration: {BuildingConfiguration.TotalFloors} floors, {BuildingConfiguration.TotalElevators} elevators");
+                Console.WriteLine($"Simulation Speed: {BuildingConfiguration.SimulationSpeedMultiplier}x faster than real-time");
+                Console.WriteLine("Press 'q' to quit, 's' to show system status\n");
+
+                InitializeServices();
+
+                _cancellationTokenSource = new CancellationTokenSource();
+                _isRunning = true;
+
+                // Handle Ctrl+C gracefully
+                Console.CancelKeyPress += (sender, e) =>
+                {
+                    e.Cancel = true;
+                    Console.WriteLine("\nShutting down gracefully...");
+                    _cancellationTokenSource.Cancel();
+                };
+
+                var controllerTask = _elevatorController.StartAsync(_cancellationTokenSource.Token);
+                var requestTask = GenerateRandomRequestsAsync(_cancellationTokenSource.Token);
+                var inputTask = HandleUserInputAsync(_cancellationTokenSource.Token);
+
                 await Task.WhenAny(controllerTask, requestTask, inputTask);
             }
-            catch (OperationCanceledException)
+            catch (Exception ex)
             {
-                // Expected when cancellation is requested
+                Console.WriteLine($"Application error: {ex.Message}");
             }
             finally
             {
-                _elevatorController.Stop();
-                Console.WriteLine("\nElevator system stopped.");
+                try
+                {
+                    _isRunning = false;
+                    _elevatorController?.Stop();
+                    Console.WriteLine("\nElevator system stopped.");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Shutdown error: {ex.Message}");
+                }
             }
         }
 
@@ -67,50 +80,77 @@ namespace ElevatorControlSystem
         {
             var random = new Random();
 
-            while (!cancellationToken.IsCancellationRequested)
+            try
             {
-                try
+                while (!cancellationToken.IsCancellationRequested && _isRunning)
                 {
-                    var request = _requestGenerator.GenerateRandomRequest();
-                    await _elevatorController.ProcessRequestAsync(request);
+                    try
+                    {
+                        var request = _requestGenerator.GenerateRandomRequest();
+                        await _elevatorController.ProcessRequestAsync(request);
 
-                    // Random delay between requests (2-8 seconds in simulation time)
-                    var delayMs = random.Next(200, 800); // 2-8 seconds at 100x speed
-                    await Task.Delay(delayMs, cancellationToken);
+                        var delayMs = random.Next(200, 800);
+                        await Task.Delay(delayMs, cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Request generation error: {ex.Message}");
+                        await Task.Delay(1000, cancellationToken); // Wait before retry
+                    }
                 }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected
             }
         }
 
         private static async Task HandleUserInputAsync(CancellationToken cancellationToken)
         {
-            while (!cancellationToken.IsCancellationRequested)
+            try
             {
-                try
+                while (!cancellationToken.IsCancellationRequested && _isRunning)
                 {
-                    var key = Console.ReadKey(true);
-
-                    switch (key.KeyChar)
+                    try
                     {
-                        case 'q':
-                        case 'Q':
-                            _cancellationTokenSource.Cancel();
-                            return;
-                        case 's':
-                        case 'S':
-                            _logger.LogSystemStatus(_elevatorController.GetElevators());
-                            break;
-                    }
+                        // Check if input is available (Mac compatible)
+                        if (Console.KeyAvailable)
+                        {
+                            var key = Console.ReadKey(true);
 
-                    await Task.Delay(100, cancellationToken);
+                            switch (key.KeyChar)
+                            {
+                                case 'q':
+                                case 'Q':
+                                    _cancellationTokenSource.Cancel();
+                                    return;
+                                case 's':
+                                case 'S':
+                                    _logger.LogSystemStatus(_elevatorController.GetElevators());
+                                    break;
+                            }
+                        }
+
+                        await Task.Delay(100, cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Input handling error: {ex.Message}");
+                        await Task.Delay(1000, cancellationToken);
+                    }
                 }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected
             }
         }
     }

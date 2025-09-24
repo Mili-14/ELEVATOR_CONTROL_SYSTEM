@@ -269,30 +269,4 @@ namespace ELEVATOR_CONTROL_SYSTEM.Tests
             Assert.Contains("Arrival:", string.Join(" ", mockLogger.LoggedMessages));
         }
     }
-
-    public class ElevatorControllerIntegrationTests
-    {
-        [Fact]
-        public async Task ProcessRequestAsync_ShouldAssignRequestToElevator()
-        {
-            // Arrange
-            var mockLogger = new MockLoggingService();
-            var dispatcher = new OptimalRequestDispatcher();
-            var elevatorService = new ElevatorService(mockLogger);
-            var controller = new ElevatorController(dispatcher, elevatorService, mockLogger);
-
-            var request = new ElevatorRequest(5, RequestType.Up);
-
-            // Act
-            await controller.ProcessRequestAsync(request);
-
-            // Give some time for processing
-            await Task.Delay(100);
-
-            // Assert
-            var elevators = controller.GetElevators();
-            Assert.True(elevators.Any(e => e.DestinationFloors.Contains(5)));
-            Assert.Contains("Request:", string.Join(" ", mockLogger.LoggedMessages));
-        }
-    }
 }

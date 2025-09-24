@@ -17,9 +17,9 @@ namespace ELEVATOR_CONTROL_SYSTEM.Controller
         private readonly ILoggingService _logger;
         private readonly Dictionary<int, Task> _elevatorTasks;
         private readonly Dictionary<int, CancellationTokenSource> _elevatorCancellationSources;
-        private readonly Queue<ElevatorRequest> _pendingRequests;
         private readonly object _lockObject = new object();
         private CancellationTokenSource _mainCancellationSource;
+        private volatile bool _isRunning = false;
 
         public ElevatorController(IRequestDispatcher dispatcher, IElevatorService elevatorService, ILoggingService logger)
         {
@@ -29,7 +29,6 @@ namespace ELEVATOR_CONTROL_SYSTEM.Controller
             _logger = logger;
             _elevatorTasks = new Dictionary<int, Task>();
             _elevatorCancellationSources = new Dictionary<int, CancellationTokenSource>();
-            _pendingRequests = new Queue<ElevatorRequest>();
 
             InitializeElevators();
         }
@@ -46,26 +45,46 @@ namespace ELEVATOR_CONTROL_SYSTEM.Controller
 
         public async Task ProcessRequestAsync(ElevatorRequest request)
         {
-            _logger.LogRequest(request);
-
-            lock (_lockObject)
+            try
             {
-                var selectedElevator = _dispatcher.SelectElevatorForRequest(request, _elevators);
-                selectedElevator.AddDestination(request.Floor);
+                if (!_isRunning) return;
 
-                // Add destination floor if it's a destination request
-                if (request.Type == RequestType.Destination && request.DestinationFloor.HasValue)
-                {
-                    selectedElevator.AddDestination(request.DestinationFloor.Value);
-                }
+                _logger.LogRequest(request);
 
-                // Start elevator task if not already running
-                if (!_elevatorTasks.ContainsKey(selectedElevator.Id) || _elevatorTasks[selectedElevator.Id].IsCompleted)
+                lock (_lockObject)
                 {
-                    _elevatorCancellationSources[selectedElevator.Id] = new CancellationTokenSource();
-                    _elevatorTasks[selectedElevator.Id] = Task.Run(() =>
-                        _elevatorService.MoveElevatorAsync(selectedElevator, _elevatorCancellationSources[selectedElevator.Id].Token));
+                    var selectedElevator = _dispatcher.SelectElevatorForRequest(request, _elevators);
+                    selectedElevator.AddDestination(request.Floor);
+
+                    if (request.Type == RequestType.Destination && request.DestinationFloor.HasValue)
+                    {
+                        selectedElevator.AddDestination(request.DestinationFloor.Value);
+                    }
+
+                    if (!_elevatorTasks.ContainsKey(selectedElevator.Id) || _elevatorTasks[selectedElevator.Id].IsCompleted)
+                    {
+                        if (_elevatorCancellationSources[selectedElevator.Id].IsCancellationRequested)
+                        {
+                            _elevatorCancellationSources[selectedElevator.Id] = new CancellationTokenSource();
+                        }
+
+                        _elevatorTasks[selectedElevator.Id] = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                await _elevatorService.MoveElevatorAsync(selectedElevator, _elevatorCancellationSources[selectedElevator.Id].Token);
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"Elevator task error: {ex.Message}");
+                            }
+                        });
+                    }
                 }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error processing request: {ex.Message}");
             }
         }
 
@@ -73,33 +92,71 @@ namespace ELEVATOR_CONTROL_SYSTEM.Controller
         {
             lock (_lockObject)
             {
-                return _elevators.AsReadOnly();
+                return _elevators.ToList().AsReadOnly();
             }
         }
 
         public async Task StartAsync(CancellationToken cancellationToken)
         {
-            _mainCancellationSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-
-            _logger.LogSystemStatus(_elevators);
-
-            // Keep the controller running
-            while (!_mainCancellationSource.Token.IsCancellationRequested)
+            try
             {
-                await Task.Delay(1000, _mainCancellationSource.Token);
+                _isRunning = true;
+                _mainCancellationSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+                _logger.LogSystemStatus(_elevators);
+
+                while (!_mainCancellationSource.Token.IsCancellationRequested)
+                {
+                    await Task.Delay(1000, _mainCancellationSource.Token);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected when cancellation is requested
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error in controller: {ex.Message}");
+            }
+            finally
+            {
+                _isRunning = false;
             }
         }
 
         public void Stop()
         {
-            _mainCancellationSource?.Cancel();
-
-            foreach (var cancellationSource in _elevatorCancellationSources.Values)
+            try
             {
-                cancellationSource.Cancel();
-            }
+                _isRunning = false;
+                _mainCancellationSource?.Cancel();
 
-            Task.WaitAll(_elevatorTasks.Values.ToArray(), TimeSpan.FromSeconds(5));
+                foreach (var cancellationSource in _elevatorCancellationSources.Values)
+                {
+                    try
+                    {
+                        cancellationSource.Cancel();
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error cancelling elevator: {ex.Message}");
+                    }
+                }
+
+                var tasks = _elevatorTasks.Values.ToArray();
+                try
+                {
+                    Task.WaitAll(tasks, TimeSpan.FromSeconds(2));
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error waiting for tasks: {ex.Message}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error stopping controller: {ex.Message}");
+            }
         }
     }
 }

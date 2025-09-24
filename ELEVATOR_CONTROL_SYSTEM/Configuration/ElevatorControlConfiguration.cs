@@ -13,7 +13,7 @@ namespace ELEVATOR_CONTROL_SYSTEM.Configuration
         public const int TotalElevators = 4;
         public const int FloorTravelTimeMs = 10000; // 10 seconds
         public const int DoorOperationTimeMs = 10000; // 10 seconds
-        public const int SimulationSpeedMultiplier = 100; // Speed up for demo (100x faster)
+        public const int SimulationSpeedMultiplier = 100; // Speed up for demo
     }
 
     public static class TimeConfiguration
